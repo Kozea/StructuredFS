@@ -1,10 +1,21 @@
+"""
 
-from . import FOO
+Tests for StructuredFS.
+
+"""
+
+
 from attest import Tests
+
+from . import StructuredDirectory
+
 
 SUITE = Tests()
 
 @SUITE.test
-def foo():
-    assert FOO == 4
-
+def test_parser():
+    """
+    Test the pattern parser.
+    """
+    directory = StructuredDirectory('.', '{category}/{number}_{name}.txt')
+    assert directory.properties == set(['category', 'number', 'name'])
