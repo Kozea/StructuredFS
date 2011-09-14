@@ -214,7 +214,12 @@ class Item(collections.Mapping):
         """
         Create or overwrite the file with the ``content`` bytestring.
         """
-        with open(self.full_filename, 'wb') as file_:
+        filename = self.full_filename
+        directory = os.path.dirname(filename)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        with open(filename, 'wb') as file_:
             file_.write(content)
 
     def remove(self):
@@ -291,7 +296,7 @@ class StructuredDirectory(object):
             )
             if len(fixed_part_values) == len(part_properties):
                 # All properties for this part are fixed
-                fixed_part = vformat(pattern_part, [], fixed_part_values)
+                fixed_part = vformat(pattern_part, [], dict(fixed_part_values))
             else:
                 fixed_part = None
             fixed.append((fixed_part, fixed_part_values))
