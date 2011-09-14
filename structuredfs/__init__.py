@@ -7,6 +7,11 @@ Handle nicely a set of files in a structured directory.
 
 import os
 import re
+import string
+import collections
+
+
+vformat = string.Formatter().vformat
 
 
 try:
@@ -83,14 +88,14 @@ def _tokenize_pattern(pattern):
 
 
 def _parse_pattern(pattern):
-    """
+    r"""
     Parse a string pattern and return (path_parts_re, path_parts_properties)
 
     >>> _parse_pattern('{category}/{number}_{name}.txt')
     (
         (
             <re object '^(?P<category>.*)$'>,
-            <re object '^(?P<number>.*)_(?P<name>.*)$'>
+            <re object r'^(?P<number>.*)\_(?P<name>.*)\.txt$'>
         ), (
             ('category',)
             ('number', 'name')
@@ -151,9 +156,14 @@ def strict_unicode(value):
     return unicode(value)
 
 
-class Item(object):
+class Item(collections.Mapping):
     """
     Represents a single file in a :class:`StructuredDirectory`.
+
+    Can be used as a read-only mapping (dict-like) to access properties.
+
+    Note that at a given point in time, the actual file for an Item may or
+    may not exist in the filesystem.
     """
     def __init__(self, directory, properties):
         properties = dict(properties)
@@ -166,42 +176,43 @@ class Item(object):
             raise ValueError('Unknown properties: %s', ', '.join(extra))
 
         self.directory = directory
-        self.properties = properties
-
-    def __getitem__(self, name):
-        return self.properties[name]
+        self._properties = {}
+        # TODO: check for ambiguities.
+        # eg. with pattern = '{a}_{b}', values {'a': '1_2', 'b': '3'} and
+        # {'a': '1', 'b': '2_3'} both give the same filename.
+        for name, value in properties.items():
+            value = strict_unicode(value)
+            if '/' in value:
+                raise ValueError('Property values can not contain a slash.')
+            self._properties[name] = value
 
     @property
     def filename(self):
         """
-        Return the slash-separated filename for the item, relative to the root.
+        Return the normalized (slash-separated) filename for the item,
+        relative to the root.
         """
-        # TODO: check for ambiguities.
-        values = {}
-        for name in self.directory.identity_properties:
-            value = strict_unicode(self[name])
-            if '/' in value:
-                raise ValueError('Property values can not contain a slash.')
-            values[name] = value
-        return self.directory.pattern.format(**values)
+        return vformat(self.directory.pattern, [], self)
 
     @property
     def full_filename(self):
         """
-        Return the absolute filename for the item.
+        Return the absolute filename for the item, in OS-specific form.
         """
-        return os.path.join(self.directory.root_dir, *self.filename.split('/'))
+        return self.directory._join(self.filename.split('/'))
 
     def read(self):
         """
-        Return the content of the file as a bytestring
+        Return the content of the file as a bytestring.
+
+        :raises IOError: if the file does not exist in the filesystem.
         """
         with open(self.full_filename, 'rb') as file_:
             return file_.read()
 
     def write(self, content):
         """
-        Overwrite the file with the ``content`` bytestring.
+        Create or overwrite the file with the ``content`` bytestring.
         """
         with open(self.full_filename, 'wb') as file_:
             file_.write(content)
@@ -209,8 +220,32 @@ class Item(object):
     def remove(self):
         """
         Remove the file from the filesystem.
+
+        :raises OSError: if the file does not exist in the filesystem.
         """
         os.remove(self.full_filename)
+
+        # Remove empty directories up to (but not including) root_dir
+        path_parts = self.filename.split('/')
+        path_parts.pop()  # Last part is the file name, only keep directories.
+        while path_parts:
+            directory = self.directory._join(path_parts)
+            if os.listdir(directory):
+                break
+            else:
+                os.rmdir(directory)
+            path_parts.pop()  # Go to the parent directory
+
+    # collections.Mapping interface:
+
+    def __len__(self):
+        return len(self._properties)
+
+    def __iter__(self):
+        return iter(self._properties)
+
+    def __getitem__(self, name):
+        return self._properties[name]
 
 
 class StructuredDirectory(object):
@@ -256,7 +291,7 @@ class StructuredDirectory(object):
             )
             if len(fixed_part_values) == len(part_properties):
                 # All properties for this part are fixed
-                fixed_part = pattern_part.format(**fixed_part_values)
+                fixed_part = vformat(pattern_part, [], fixed_part_values)
             else:
                 fixed_part = None
             fixed.append((fixed_part, fixed_part_values))
@@ -272,11 +307,10 @@ class StructuredDirectory(object):
         # If the pattern has N path parts, "leaf" files are at depth = N-1
         is_leaf = (depth == len(self._path_parts_re) - 1)
 
-
         for name, part_values in self._find_matching_names(
                 previous_path_parts, fixed):
-            path_parts = previous_path_parts + [name]
-            values = previous_values + part_values
+            path_parts = previous_path_parts + (name,)
+            values = previous_values + tuple(part_values)
             filename = self._join(path_parts)
             if is_leaf:
                 if os.path.isfile(filename):
