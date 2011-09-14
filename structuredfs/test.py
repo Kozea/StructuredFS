@@ -186,3 +186,89 @@ def test_get_item(tempdir):
 
     with assert_raises(ValueError, 'Unknown properties'):
         filenames(fiz='5')
+
+
+@SUITE.test
+def test_optimizations(tempdir):
+    """
+    Test that :meth:`StructuredDirectory.get_items` doesn’t do more calls
+    to :func:`os.listdir` than needed.
+    """
+    text = StructuredDirectory(tempdir, '{cat}/{org}_{name}/{id}')
+
+    listed = []
+    real_listdir = text._listdir
+
+    def listdir_mock(parts):
+        listed.append('/'.join(parts))
+        return real_listdir(parts)
+
+    text._listdir = listdir_mock
+
+    contents = {}
+
+    def create(**values):
+        item = Item(text, values)
+        assert values['id'] not in contents  # Make sure ids are unique
+        content = item.filename.encode('ascii')
+        item.write(content)
+        contents[values['id']] = content
+
+    def assert_listed(properties, expected_ids, expected_listed):
+        del listed[:]
+        expected_contents = set(contents[num] for num in expected_ids)
+        results = [item.read() for item in text.get_items(**properties)]
+        assert set(results) == expected_contents
+        # Workaround a bug in Attest’s assert hook with closures
+        listed_ = listed
+        assert set(listed_) == set(expected_listed)
+
+    create(cat='lipsum', org='a', name='foo', id='1')
+
+    # No fixed values: all directories on the path are listed.
+    assert_listed(dict(),
+        ['1'],
+        ['', 'lipsum', 'lipsum/a_foo'])
+
+    # The category was fixed, no need to listdir() the root.
+    assert_listed(dict(cat='lipsum'),
+        ['1'],
+        ['lipsum', 'lipsum/a_foo'])
+
+    # The num and name were fixed, no need to listdir() the lipsum dir.
+    assert_listed(dict(org='a', name='foo'),
+        ['1'],
+        ['', 'lipsum/a_foo'])
+
+    # All filename properties were fixed, no need to listdir() anything
+    assert_listed(dict(cat='lipsum', org='a', name='foo', id='1'),
+        ['1'],
+        [])
+
+    create(cat='lipsum', org='b', name='foo', id='2')
+    create(cat='dolor', org='c', name='bar', id='3')
+
+    assert_listed(dict(),
+        ['1', '2', '3'],
+        ['', 'lipsum', 'dolor', 'lipsum/a_foo', 'lipsum/b_foo', 'dolor/c_bar'])
+
+    # No need to listdir() the root
+    assert_listed(dict(cat='lipsum'),
+        ['1', '2'],
+        ['lipsum', 'lipsum/a_foo', 'lipsum/b_foo'])
+
+    # No need to listdir() the root
+    assert_listed(dict(cat='dolor'),
+        ['3'],
+        ['dolor', 'dolor/c_bar'])
+
+    # org='b' is not a whole part so we still need to listdir() lipsum,
+    # but can filter out some deeper directories
+    assert_listed(dict(org='b'),
+        ['2'],
+        ['', 'lipsum', 'dolor', 'lipsum/b_foo'])
+
+    # Does not list the root and directry tries to list 'nonexistent'
+    assert_listed(dict(cat='nonexistent'),
+        [],
+        ['nonexistent'])

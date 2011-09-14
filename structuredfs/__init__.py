@@ -7,6 +7,7 @@ Handle nicely a set of files in a structured directory.
 
 import os
 import re
+import errno
 import string
 import collections
 
@@ -320,7 +321,9 @@ class StructuredDirectory(object):
             if is_leaf:
                 if os.path.isfile(filename):
                     yield Item(self, values)
-            elif os.path.isdir(filename):
+            # Do not check if filename is a directory or even exists,
+            # let listdir() raise later.
+            else:
                 for item in self._walk(path_parts, values, fixed):
                     yield item
 
@@ -332,16 +335,29 @@ class StructuredDirectory(object):
         fixed_part, fixed_part_values = fixed[depth]
         if fixed_part is not None:
             yield fixed_part, fixed_part_values
-        else:
-            for name in os.listdir(self._join(previous_path_parts)):
-                match = self._path_parts_re[depth].match(name)
-                if match is None:
-                    continue
+            return
 
-                part_values = match.groupdict()
-                if all(part_values[name] == value
-                       for name, value in fixed_part_values):
-                    yield name, part_values.items()
+        try:
+            names = self._listdir(previous_path_parts)
+        except OSError, exc:
+            if depth > 0 and exc.errno in [errno.ENOENT, errno.ENOTDIR]:
+                # Does not exist or is not a directory, just return
+                # without yielding any name.
+                # If depth == 0, we're listing the root directory. Still raise
+                # in that case.
+                return
+            else:
+                # Re-raise other errors
+                raise
+        for name in names:
+            match = self._path_parts_re[depth].match(name)
+            if match is None:
+                continue
+
+            part_values = match.groupdict()
+            if all(part_values[name] == value
+                   for name, value in fixed_part_values):
+                yield name, part_values.items()
 
     def _join(self, path_parts):
         """
@@ -349,3 +365,9 @@ class StructuredDirectory(object):
         """
         # root_dir is unicode, so the join result should be unicode
         return os.path.join(self.root_dir, *path_parts)
+
+    def _listdir(self, path_parts):
+        """
+        Wrap os.listdir to make it monkey-patchable in tests.
+        """
+        return os.listdir(self._join(path_parts))
