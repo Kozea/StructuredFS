@@ -5,6 +5,8 @@ Tests for StructuredFS.
 """
 
 
+from __future__ import unicode_literals
+
 import os
 import functools
 from contextlib import contextmanager
@@ -135,20 +137,20 @@ def test_items(tempdir):
     open(os.path.join(text.root_dir, 'lipsum', '4_foo.txt'), 'wb').close()
 
     # Create a file from an Item
-    Item(text, dict(category='lipsum', num='5', name='bar')).write('BAR')
+    Item(text, dict(category='lipsum', num='5', name='bar')).write(b'BAR')
 
     item_foo, item_bar, = sorted(text.get_items(),
                                  key=lambda item: item['num'])
     assert len(item_foo) == 3
     assert dict(item_foo) == dict(category='lipsum', num='4', name='foo')
-    assert item_foo.read() == ''
+    assert item_foo.read() == b''
 
     assert len(item_bar) == 3
     assert dict(item_bar) == dict(category='lipsum', num='5', name='bar')
-    assert item_bar.read() == 'BAR'
+    assert item_bar.read() == b'BAR'
 
-    content = u'Hello, Wörld!'
-    with attest.raises(UnicodeError):
+    content = 'Hello, Wörld!'
+    with attest.raises(UnicodeError, TypeError):
         item_foo.write(content)
     item_foo.write(content.encode('utf8'))
     assert item_foo.read().decode('utf8') == content
@@ -172,8 +174,8 @@ def test_get_item(tempdir):
     """
     text = StructuredDirectory(tempdir, '{category}/{num}_{name}.txt')
 
-    Item(text, dict(category='lipsum', num='4', name='foo')).write('FOO')
-    Item(text, dict(category='lipsum', num='5', name='bar')).write('BAR')
+    Item(text, dict(category='lipsum', num='4', name='foo')).write(b'FOO')
+    Item(text, dict(category='lipsum', num='5', name='bar')).write(b'BAR')
 
     def filenames(**properties):
         return [i.filename for i in text.get_items(**properties)]
